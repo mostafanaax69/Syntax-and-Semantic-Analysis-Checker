@@ -1,0 +1,215 @@
+%{
+	#define YYSTYPE void*
+	#define YYINITDEPTH 5000
+	#include <iostream>
+	#include <stdlib.h>
+	#include "Classes.h"
+	#include "hw3_output.hpp"
+	using namespace output;
+	int yylex();
+	extern int yylineno;
+	void yyerror(const char*);
+	void bp(){
+		std:: cout << "break Point" << std::endl;
+	}
+	class Variable{
+	public:
+	Variable(string t,string n){
+	name = n;
+	type = t;
+	}
+	string name;
+	string type;
+	};
+	
+	class Args{
+	public:
+	vector<string> types;
+	vector<string> names;
+	};
+	
+%}
+
+%token ID
+%token LBRACE
+%token RBRACE
+%token VOID
+%token COMMA
+%token SC
+%token IF
+%token WHILE
+%token BREAK
+%token CONTINUE
+%token RETURN
+%token INT
+%token BYTE
+%token BOOL
+%token NUM
+%token B
+%token STRING
+%token TRUE
+%token FALSE
+
+
+
+%right ASSIGN
+%left OR
+%left AND
+%left RELOPII
+%nonassoc RELOP
+%left PLUS MINUS
+%left MULT DIV
+%right NOT
+%left LPAREN
+%left RPAREN
+%nonassoc ELSE
+
+%%
+
+Program:	{ init(); } Funcs{ closeFuncScope(); destroy();};
+
+Funcs:	{ }
+		| FuncDecl Funcs{ };
+
+FuncDecl:	RetType ID LPAREN Formals RPAREN LBRACE { openScope(); insertFunc(*(string*)$2,*((string*)$1), ((Args*)$4)->types, ((Args*)$4)->names); delete (string*)$1; delete (string*)$2; delete (Args*)$4;} Statements RBRACE{ closeVarScope(); };
+
+RetType:	Type{ $$ = $1;}
+			| VOID{ string* t = new string("VOID"); $$ = t;};
+
+Formals:	{ Args* a = new Args(); $$ = a; }
+			| FormalsList{ $$ = $1; };
+
+FormalsList:	FormalDecl{Args* a = new Args(); a->types.push_back(((Variable*)$1)->type); a->names.push_back(((Variable*)$1)->name); $$=a; delete (Variable*)$1; }
+				| FormalDecl COMMA FormalsList{ Args* a =(Args*)$3; a->types.insert(a->types.begin(),((Variable*)$1)->type); a->names.insert(a->names.begin(),((Variable*)$1)->name);  $$ = a; delete (Variable*)$1; };
+
+FormalDecl:		Type ID{ Variable* v = new Variable(*(string*)$1, *(string*)$2); delete (string*)$2; delete (string*)$1; $$ = v;};
+
+Statements:		Statement{}
+				| Statements Statement{ };
+				
+Else:  ELSE {openScope();} Statement {closeVarScope();} | %prec RPAREN
+
+Statement:		LBRACE {openScope();} Statements RBRACE{ closeVarScope();}
+				| Type ID SC{ insertVar(*(string*)$2,*(string*)$1);
+								delete (string*)$2; delete (string*)$1;}
+				| Type ID ASSIGN Exp SC{
+				string* s = (string*) $4;
+				if((*(string*)$1)!=(*(string*)$4) && ((*(string*)$1)!="INT" || (*(string*)$4)!="BYTE"))
+				{ delete (string*)$4;
+				delete (string*)$1; delete (string*)$2;
+				TypeError(); } 
+				insertVar(*(string*)$2,*(string*)$1);
+				delete (string*)$4; delete (string*)$1; delete (string*)$2;  }
+				| ID ASSIGN Exp SC{ string t = idType(*(string*)$1); if(t.compare(*(string*)$3) && (t.compare("INT") || (*(string*)$3).compare("BYTE"))){ delete (string*)$3; delete (string*)$1; TypeError(); } delete (string*)$3; delete (string*)$1;  }
+				| Call SC{}
+				| RETURN SC{ checkReturnType("VOID");}
+				| RETURN Exp SC{ checkReturnType(*(string*)$2); delete (string*)$2; }
+				| IF LPAREN Exp { 
+				string s =*(string*)$3;
+				if(s!="BOOL"){ 
+				delete (string*)$3;
+				TypeError(); } delete (string*)$3; } RPAREN { openScope();} Statement{ closeVarScope();} Else
+				| WHILE LPAREN Exp { string s = *(string*)$3; if(s!="BOOL"){
+				delete (string*)$3;
+				TypeError();
+				}
+				delete (string*)$3;
+				} RPAREN { openScope(); inLoop(); } Statement{ outLoop(); closeVarScope();} Else
+				| BREAK SC{ checkLoop(0);}
+				| CONTINUE SC{ checkLoop(1);};
+				
+Call:	ID LPAREN ExpList RPAREN{ string* s = new string(checkCall(*(vector<string>*)$3,*(string*)$1));
+								$$=s;
+								delete (string*)$1;  delete (vector<string>*)$3;}
+		| ID LPAREN RPAREN{ string* s = new string(checkCall(vector<string>(),*(string*)$1)); $$=s;  delete (string*)$1;};
+
+ExpList:	Exp{ vector<string>* v = new vector<string>();
+			v->push_back(*(string*)$1);
+			$$=v;
+			delete (string*)$1; }
+			| Exp COMMA ExpList{ vector<string>* v = (vector<string>*)$3; v->insert(v->begin(),*(string*)$1); delete (string*)$1; $$=v;};
+
+Type:		INT{ string* t = new string("INT"); $$=t;} | BYTE{ string* t = new string("BYTE"); $$=t;} | BOOL{ string* t = new string("BOOL"); $$=t;};
+
+Exp:	LPAREN Exp RPAREN{ $$=$2;}
+		| Exp PLUS Exp
+		{ string s1 = (*(string*)$1), s3 = (*(string*)$3); 
+		delete (string*)$1; delete (string*)$3;
+		string* s = nullptr;
+		if(s1=="BYTE" && s3=="BYTE"){
+			s =new string("BYTE");
+		} else if( (s1=="BYTE" || s1=="INT") && (s3=="BYTE" || s3=="INT") ){
+			s=new string("INT");
+		} else{ 
+		TypeError();
+		}  $$=s;
+		}
+		| Exp MINUS Exp
+		{ string s1 = (*(string*)$1), s3 = (*(string*)$3); delete (string*)$1; delete (string*)$3;
+		if(s1=="BYTE" && s3=="BYTE"){
+			string* s =new string("BYTE"); $$=s;
+		} else if( (s1=="BYTE" || s1=="INT") && (s3=="BYTE" || s3=="INT") ){
+			string* s =new string("INT"); $$=s;
+		} else{ TypeError(); } 
+		}
+		| Exp MULT Exp
+		{ string s1 = (*(string*)$1), s3 = (*(string*)$3); delete (string*)$1; delete (string*)$3;
+		if(s1=="BYTE" && s3=="BYTE"){
+			string* s =new string("BYTE"); $$=s;
+		} else if( (s1=="BYTE" || s1=="INT") && (s3=="BYTE" || s3=="INT") ){
+			string* s =new string("INT"); $$=s;
+		} else{ TypeError(); } 
+		}
+		| Exp DIV Exp
+		{ string s1 = (*(string*)$1), s3 = (*(string*)$3); delete (string*)$1; delete (string*)$3;
+		if(s1=="BYTE" && s3=="BYTE"){
+			string* s =new string("BYTE"); $$=s;
+		} else if( (s1=="BYTE" || s1=="INT") && (s3=="BYTE" || s3=="INT") ){
+			string* s =new string("INT"); $$=s;
+		} else{ TypeError(); } 
+		}
+		| ID{ string* s = new string(idType(*(string*)$1));
+		$$ = s;
+		delete (string*)$1;}
+		| Call{ $$ = $1 ;}
+		| NUM{  $$= new string("INT"); delete (string*)$1;}
+		| NUM B{ checkByte(*(string*)$1); $$=new string("BYTE"); delete (string*)$1;}
+		| STRING{  $$= new string("STRING");}
+		| TRUE{ $$=new string("BOOL"); }
+		| FALSE{ $$=new string("BOOL") ;}
+		| NOT Exp
+		{ 
+		string s = *(string*)$2;
+		if(s!="BOOL"){ delete (string*)$2; TypeError(); }
+		delete (string*)$2;
+		$$=new string("BOOL");
+		}
+		| Exp AND Exp
+		{ 
+		if((*(string*)$1).compare("BOOL") || (*(string*)$3).compare("BOOL")){ delete (string*)$3; delete (string*)$1; TypeError(); } $$=$1; delete (string*)$3; 
+		}
+		| Exp OR Exp
+		{ 
+		if((*(string*)$1).compare("BOOL") || (*(string*)$3).compare("BOOL")){ delete (string*)$3; delete (string*)$1; TypeError(); } $$=$1; delete (string*)$3; 
+		}
+		| Exp RELOP Exp
+		{ 
+			checkRelOp((string*)$3,(string*)$1);
+			$$ = new string("BOOL");
+		}
+		| Exp RELOPII Exp
+		{ 
+		if(((*(string*)$1).compare("INT") && (*(string*)$1).compare("BYTE")) || ((*(string*)$3).compare("INT") && (*(string*)$3).compare("BYTE")) ){ delete (string*)$3; delete (string*)$1; TypeError(); } string* s = new string("BOOL"); $$=s; delete (string*)$3; delete (string*)$1;
+		};
+
+%%
+
+int main()
+{
+	return yyparse();
+}
+
+void yyerror (char const *s) {
+   errorSyn(yylineno);
+   exit(1);
+ }
